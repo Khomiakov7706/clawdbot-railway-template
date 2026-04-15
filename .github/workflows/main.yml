@@ -1,0 +1,56 @@
+name: Bump OpenClaw version
+
+on:
+  schedule:
+    # Runs every Monday at 09:00 UTC
+    - cron: "0 9 * * 1"
+  workflow_dispatch: # Allow manual trigger from GitHub UI
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Run bump script
+        id: bump
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          output=$(node scripts/bump-openclaw-ref.mjs)
+          echo "$output"
+          if echo "$output" | grep -q "No update needed"; then
+            echo "updated=false" >> $GITHUB_OUTPUT
+          else
+            # Extract the new tag from the output line: "current=vX latest=vY"
+            new_tag=$(echo "$output" | grep -oP 'latest=\K\S+')
+            echo "updated=true" >> $GITHUB_OUTPUT
+            echo "new_tag=$new_tag" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Open PR if updated
+        if: steps.bump.outputs.updated == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore: bump OpenClaw to ${{ steps.bump.outputs.new_tag }}"
+          branch: "bump/openclaw-${{ steps.bump.outputs.new_tag }}"
+          delete-branch: true
+          title: "chore: bump OpenClaw to ${{ steps.bump.outputs.new_tag }}"
+          body: |
+            Automated version bump by the `bump-openclaw` workflow.
+
+            **New version:** `${{ steps.bump.outputs.new_tag }}`
+
+            Check the [OpenClaw changelog](https://github.com/openclaw/openclaw/releases/tag/${{ steps.bump.outputs.new_tag }}) for breaking changes before merging.
+          labels: dependencies
