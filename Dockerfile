@@ -16,6 +16,8 @@ RUN apt-get update \
 RUN curl -fsSL https://bun.sh/install | bash
 ENV PATH="/root/.bun/bin:${PATH}"
 
+# Ignore openclaw's `packageManager` field (it pins pnpm 11); use the activated 10.23.0 instead.
+ENV COREPACK_ENABLE_PROJECT_SPEC=0
 RUN corepack enable && corepack prepare pnpm@10.23.0 --activate
 
 WORKDIR /openclaw
@@ -33,12 +35,31 @@ RUN set -eux; \
     sed -i -E 's/"openclaw"[[:space:]]*:[[:space:]]*"workspace:[^"]+"/"openclaw": "*"/g' "$f"; \
   done
 
-RUN cat >> pnpm-workspace.yaml <<'EOF'
+RUN python3 - <<'PY'
+from pathlib import Path
 
-minimumReleaseAge: 0
-resolutionMode: highest
-minimumReleaseAgeIgnoreMissingTime: true
-EOF
+path = Path("pnpm-workspace.yaml")
+lines = path.read_text().splitlines()
+
+remove_keys = (
+    "minimumReleaseAge:",
+    "resolutionMode:",
+    "minimumReleaseAgeIgnoreMissingTime:",
+)
+
+cleaned = [
+    line for line in lines
+    if not line.lstrip().startswith(remove_keys)
+]
+
+path.write_text(
+    "\n".join(cleaned).rstrip()
+    + "\n\n"
+    + "minimumReleaseAge: 0\n"
+    + "resolutionMode: highest\n"
+    + "minimumReleaseAgeIgnoreMissingTime: true\n"
+)
+PY
 
 RUN pnpm install --no-frozen-lockfile
 RUN pnpm build
