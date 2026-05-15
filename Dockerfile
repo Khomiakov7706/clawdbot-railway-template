@@ -16,7 +16,7 @@ RUN apt-get update \
 RUN curl -fsSL https://bun.sh/install | bash
 ENV PATH="/root/.bun/bin:${PATH}"
 
-RUN corepack enable
+RUN corepack enable && corepack prepare pnpm@10.23.0 --activate
 
 WORKDIR /openclaw
 
@@ -33,7 +33,13 @@ RUN set -eux; \
     sed -i -E 's/"openclaw"[[:space:]]*:[[:space:]]*"workspace:[^"]+"/"openclaw": "*"/g' "$f"; \
   done
 
-RUN echo "resolution-mode=highest" >> .npmrc
+RUN cat >> pnpm-workspace.yaml <<'EOF'
+
+minimumReleaseAge: 0
+resolutionMode: highest
+minimumReleaseAgeIgnoreMissingTime: true
+EOF
+
 RUN pnpm install --no-frozen-lockfile
 RUN pnpm build
 ENV OPENCLAW_PREFER_PNPM=1
