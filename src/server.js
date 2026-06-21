@@ -171,12 +171,101 @@ async function waitForGatewayReady(opts = {}) {
   return false;
 }
 
+// Collect every "provider/model" reference selected for the agent so we can verify
+// each one is actually registered with its provider. `agents.defaults.models` may be
+// a string, an array (of strings or { model }/{ id } objects), or an object keyed by
+// the model reference (the shape OpenClaw logs as agents.defaults.models["prov/model"]).
+function collectAgentModelRefs(cfg) {
+  const refs = new Set();
+  const add = (v) => {
+    if (typeof v === "string" && v.includes("/")) refs.add(v.trim());
+  };
+  const m = cfg?.agents?.defaults?.models;
+  if (!m) return [];
+  if (typeof m === "string") {
+    add(m);
+  } else if (Array.isArray(m)) {
+    for (const it of m) {
+      if (typeof it === "string") add(it);
+      else if (it && typeof it === "object") { add(it.model); add(it.id); add(it.ref); }
+    }
+  } else if (typeof m === "object") {
+    for (const [k, v] of Object.entries(m)) {
+      add(k);
+      if (typeof v === "string") add(v);
+      else if (v && typeof v === "object") { add(v.model); add(v.id); add(v.ref); }
+    }
+  }
+  return [...refs];
+}
+
+// Self-heal for the "Unknown model: <provider>/<model>" startup failure: if the agent
+// is configured to use a model that is not listed under models.providers[provider].models[],
+// the embedded agent crashes on its first reply even though the gateway boots fine.
+// Register any missing model so existing deployments recover on the next redeploy.
+async function ensureAgentModelsRegistered() {
+  let cfg;
+  try {
+    cfg = JSON.parse(fs.readFileSync(configPath(), "utf8"));
+  } catch {
+    return; // No parseable config yet (e.g. not onboarded) — nothing to heal.
+  }
+
+  const refs = collectAgentModelRefs(cfg);
+  if (!refs.length) return;
+
+  for (const ref of refs) {
+    const slash = ref.indexOf("/");
+    if (slash <= 0) continue;
+    const provider = ref.slice(0, slash);
+    const modelId = ref.slice(slash + 1);
+    if (!provider || !modelId) continue;
+
+    // Read the effective model list for this provider (built-in defaults + user config).
+    let models = [];
+    const got = await runCmd(
+      OPENCLAW_NODE,
+      clawArgs(["config", "get", "--json", `models.providers.${provider}.models`]),
+    );
+    if (got.code === 0) {
+      try {
+        const parsed = JSON.parse((got.output || "").trim());
+        if (Array.isArray(parsed)) models = parsed;
+      } catch {
+        // Unset/unparseable — treat as empty and register from scratch.
+      }
+    }
+
+    const has = models.some((m) => (typeof m === "string" ? m === modelId : m?.id === modelId));
+    if (has) continue;
+
+    models.push({ id: modelId, name: modelId });
+    await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "models.mode", "merge"]));
+    const set = await runCmd(
+      OPENCLAW_NODE,
+      clawArgs(["config", "set", "--json", `models.providers.${provider}.models`, JSON.stringify(models)]),
+    );
+    if (set.code === 0) {
+      console.log(`[self-heal] registered agent model "${modelId}" on provider "${provider}"`);
+    } else {
+      console.warn(`[self-heal] failed to register "${ref}": ${set.output}`);
+    }
+  }
+}
+
 async function startGateway() {
   if (gatewayProc) return;
   if (!isConfigured()) throw new Error("Gateway cannot start: not configured");
 
   fs.mkdirSync(STATE_DIR, { recursive: true });
   fs.mkdirSync(WORKSPACE_DIR, { recursive: true });
+
+  // Ensure the agent's selected model(s) are registered before booting the gateway.
+  try {
+    await ensureAgentModelsRegistered();
+  } catch (err) {
+    console.warn(`[self-heal] model registration skipped: ${String(err)}`);
+  }
 
   const args = [
     "gateway",

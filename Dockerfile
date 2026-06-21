@@ -24,8 +24,16 @@ WORKDIR /openclaw
 
 # Pin to a known-good ref (tag/branch). Override in Railway template settings if needed.
 # Using a released tag avoids build breakage when `main` temporarily references unpublished packages.
-ARG OPENCLAW_GIT_REF=v2026.6.6
-RUN git clone --depth 1 --branch "${OPENCLAW_GIT_REF}" https://github.com/openclaw/openclaw.git .
+ARG OPENCLAW_GIT_REF=v2026.6.9
+# Clone OpenClaw, then FAIL the build if the cloned source version does not match the
+# requested ref. This guards against a stale Docker build-layer cache silently shipping an
+# old OpenClaw (e.g. 2026.3.8) even though OPENCLAW_GIT_REF was bumped. Editing this RUN's
+# text also invalidates the layer so the next build performs a fresh clone.
+RUN git clone --depth 1 --branch "${OPENCLAW_GIT_REF}" https://github.com/openclaw/openclaw.git . \
+  && actual="$(node -p "require('./package.json').version")" \
+  && expected="${OPENCLAW_GIT_REF#v}" \
+  && echo "OpenClaw clone check: requested=${expected} actual=${actual}" \
+  && { [ "${actual}" = "${expected}" ] || { echo "FATAL: built OpenClaw ${actual} != requested ${expected} (stale cache?)"; exit 1; }; }
 
 # Patch: relax version requirements for packages that may reference unpublished versions.
 # Apply to all extension package.json files to handle workspace protocol (workspace:*).
