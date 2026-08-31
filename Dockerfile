@@ -24,7 +24,7 @@ WORKDIR /openclaw
 
 # Pin to a known-good ref (tag/branch). Override in Railway template settings if needed.
 # Using a released tag avoids build breakage when `main` temporarily references unpublished packages.
-ARG OPENCLAW_GIT_REF=v2026.7.1
+ARG OPENCLAW_GIT_REF=v2026.8.1
 # Clone OpenClaw, then FAIL the build if the cloned source version does not match the
 # requested ref. This guards against a stale Docker build-layer cache silently shipping an
 # old OpenClaw (e.g. 2026.3.8) even though OPENCLAW_GIT_REF was bumped. Editing this RUN's
